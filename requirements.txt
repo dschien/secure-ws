@@ -1,0 +1,5 @@
+websocket-client
+simplejson
+requests
+twisted
+autobahn
