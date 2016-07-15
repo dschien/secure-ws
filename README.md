@@ -34,3 +34,6 @@ check `local_settings.py` urls are identical to configuration in `login_server.p
 - emit device state change messages
 - emit a capability push every fourth messages
 - can close all sockets via telnet `echo "close" | curl telnet://localhost:8000` --> triggers re-login
+
+## Screenshot
+![Screenshot](https://raw.githubusercontent.com/dschien/secure-ws/master/screen.png)
