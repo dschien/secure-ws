@@ -52,6 +52,10 @@ ws_push_data_cap_update = {"DataType": 1, "Data": {
 class BroadcastServerProtocol(WebSocketServerProtocol):
     def onOpen(self):
         self.factory.register(self)
+        self.factory.pingsSent[self.peer] = 0
+        self.factory.pongsReceived[self.peer] = 0
+        self.run = True
+        self.doPing()
 
     def onMessage(self, payload, isBinary):
         if not isBinary:
@@ -65,6 +69,17 @@ class BroadcastServerProtocol(WebSocketServerProtocol):
     def onClose(self, wasClean, code, reason):
         print("WebSocket connection closed: {0}".format(reason))
 
+    def doPing(self):
+        if self.run:
+            self.sendPing()
+            self.factory.pingsSent[self.peer] += 1
+            print("Ping sent to {} - {}".format(self.peer, self.factory.pingsSent[self.peer]))
+            reactor.callLater(1, self.doPing)
+
+    def onPong(self, payload):
+        self.factory.pongsReceived[self.peer] += 1
+        print("Pong received from {} - {}".format(self.peer, self.factory.pongsReceived[self.peer]))
+
 
 class BroadcastServerFactory(WebSocketServerFactory):
     """
@@ -77,6 +92,8 @@ class BroadcastServerFactory(WebSocketServerFactory):
         self.clients = []
         self.tickcount = 0
         self.tick()
+        self.pingsSent = {}
+        self.pongsReceived = {}
 
     def tick(self):
         self.tickcount += 1

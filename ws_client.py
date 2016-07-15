@@ -75,6 +75,17 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
     def onClose(self, wasClean, code, reason):
         logger.warn("WebSocket connection closed: {0}".format(reason))
 
+    def onOpen(self):
+        self.pingsReceived = 0
+        self.pongsSent = 0
+
+    def onPing(self, payload):
+        self.pingsReceived += 1
+        print("Ping received from {} - {}".format(self.peer, self.pingsReceived))
+        self.sendPong(payload)
+        self.pongsSent += 1
+        print("Pong sent to {} - {}".format(self.peer, self.pongsSent))
+
 
 class ReloginReconnectingClientFactory(ReconnectingClientFactory):
     """
