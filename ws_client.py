@@ -31,7 +31,7 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
     alive = False
     callback = None
     alive_message = 'Secure importer alive.'
-    tick_interval = 1
+    tick_interval = 60
     heartbeat_limit = 5
 
     def onMessage(self, payload, isBinary):
@@ -71,9 +71,10 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
         :return:
         """
         self.alive = True
+        logger.info('connected to websocket')
 
         reactor.callLater(3, self.log_alive)
-        reactor.callLater(3, self.check_health)
+        # reactor.callLater(3, self.check_health)
 
         self.heartBeatCounter = 0
         reactor.callLater(1, self.tick)
@@ -230,7 +231,9 @@ def callback(payload):
 
 def get_ws_url():
     ak, ak_id = secure_API.get_auth_tokens()
+    # print(ak, ak_id)
     ws_url = secure_API.get_websocket_url(ak, ak_id)
+
     return ws_url
 
 
