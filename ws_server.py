@@ -55,7 +55,7 @@ class BroadcastServerProtocol(WebSocketServerProtocol):
         self.factory.pingsSent[self.peer] = 0
         self.factory.pongsReceived[self.peer] = 0
         self.run = True
-        self.doPing()
+        # self.doPing()
 
     def onMessage(self, payload, isBinary):
         if not isBinary:
@@ -68,6 +68,7 @@ class BroadcastServerProtocol(WebSocketServerProtocol):
 
     def onClose(self, wasClean, code, reason):
         print("WebSocket connection closed: {0}".format(reason))
+        self.run = False
 
     def doPing(self):
         if self.run:

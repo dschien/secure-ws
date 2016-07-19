@@ -31,6 +31,8 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
     alive = False
     callback = None
     alive_message = 'Secure importer alive.'
+    tick_interval = 1
+    heartbeat_limit = 5
 
     def onMessage(self, payload, isBinary):
         if not isBinary:
@@ -45,13 +47,14 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
 
         :return:
         """
-        try:
-            if not self.health_check_func():
-                logger.info("Reconnecting websocket")
-                self.factory.connector.disconnect()
-        except Exception as e:
-            logger.exception("error in health check %s" % e)
-        reactor.callLater(ReloginReconnectingClientFactory.health_check_interval, self.check_health)
+        if self.alive:
+            try:
+                if not self.health_check_func():
+                    logger.info("Reconnecting websocket")
+                    self.factory.connector.disconnect()
+            except Exception as e:
+                logger.exception("error in health check %s" % e)
+            reactor.callLater(ReloginReconnectingClientFactory.health_check_interval, self.check_health)
 
     def log_alive(self):
         """
@@ -60,7 +63,7 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
         """
         if self.alive:
             logger.info(self.alive_message)
-        reactor.callLater(ReloginReconnectingClientFactory.log_alive_interval, self.log_alive)
+            reactor.callLater(ReloginReconnectingClientFactory.log_alive_interval, self.log_alive)
 
     def connectionMade(self):
         """
@@ -68,30 +71,46 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
         :return:
         """
         self.alive = True
+
         reactor.callLater(3, self.log_alive)
         reactor.callLater(3, self.check_health)
+
+        self.heartBeatCounter = 0
+        reactor.callLater(1, self.tick)
         super().connectionMade()
+
+    def tick(self):
+        logger.info('incrementing tick')
+        self.heartBeatCounter += 1
+
+        if self.heartBeatCounter > 1:
+            logger.info('heartBeatCounter at %s' % self.heartBeatCounter)
+
+        if self.heartBeatCounter > self.heartbeat_limit:
+            logger.info('no ping for {} * {} seconds -> disconnecting'.format(self.heartbeat_limit, self.tick_interval))
+            self.factory.connector.disconnect()
+            return
+
+        reactor.callLater(self.tick_interval, self.tick)
 
     def onClose(self, wasClean, code, reason):
         logger.warn("WebSocket connection closed: {0}".format(reason))
+        super().onClose(wasClean, code, reason)
 
     def onOpen(self):
-        self.pingsReceived = 0
-        self.pongsSent = 0
+        super().onOpen()
 
     def onPing(self, payload):
-        self.pingsReceived += 1
-        print("Ping received from {} - {}".format(self.peer, self.pingsReceived))
-        self.sendPong(payload)
-        self.pongsSent += 1
-        print("Pong sent to {} - {}".format(self.peer, self.pongsSent))
+        self.heartBeatCounter = 0
+        print("Ping received from {} - {}. Resetting heartbeat counter".format(self.peer, self.heartBeatCounter))
+        super().onPing(payload)
 
 
 class ReloginReconnectingClientFactory(ReconnectingClientFactory):
     """
     Changes the websocket server address for a running client.
     """
-    health_check_interval = 15
+    health_check_interval = 300
     log_alive_interval = 300
 
     def __init__(self, *args, login_func=None, **kwargs):
