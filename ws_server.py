@@ -1,9 +1,11 @@
 import queue
 import sys
+from functools import partial
 
 import simplejson as json
 from autobahn.twisted.websocket import WebSocketServerFactory, \
     WebSocketServerProtocol, listenWS
+from twisted.internet.defer import DeferredQueue
 
 from twisted.python import log
 
@@ -95,6 +97,17 @@ class BroadcastServerFactory(WebSocketServerFactory):
         self.tick()
         self.pingsSent = {}
         self.pongsReceived = {}
+        self.callback = partial(BroadcastServerFactory.processQueue, factory=self)
+        deferred_queue.get().addCallback(self.callback)
+
+    @staticmethod
+    def processQueue(cmd, factory):
+        if cmd == 'close':
+            print('closing all connections')
+            for c in factory.clients:
+                c.sendClose()
+        # register a new callback on the queue
+        deferred_queue.get().addCallback(factory.callback)
 
     def tick(self):
         self.tickcount += 1
@@ -126,12 +139,6 @@ class BroadcastServerFactory(WebSocketServerFactory):
             c.sendMessage(msg.encode('utf8'))
             print("message sent to {}".format(c.peer))
 
-        if not q.empty():
-            cmd = q.get()
-            if cmd == 'close':
-                for c in self.clients:
-                    c.sendClose()
-
 
 class BroadcastPreparedServerFactory(BroadcastServerFactory):
     """
@@ -149,14 +156,14 @@ class BroadcastPreparedServerFactory(BroadcastServerFactory):
 
 from twisted.internet import protocol, reactor
 
-q = queue.Queue()
+deferred_queue = DeferredQueue()
 
 
 class WebsocketControl(protocol.Protocol):
     def dataReceived(self, data):
         cmd = data.decode("utf-8").strip()
         print(cmd)
-        q.put(cmd, block=False)
+        deferred_queue.put(cmd)
         self.transport.write(('added command %s to queue' % cmd).encode('utf-8'))
 
 

@@ -19,7 +19,8 @@ root.setLevel(logging.DEBUG)
 
 ch = logging.StreamHandler(sys.stdout)
 ch.setLevel(local_settings.LOG_LEVEL)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(funcName)s -  %(message)s')
+formatter = logging.Formatter(
+    '%(asctime)s - %(thread)d - %(process)d - %(name)s - %(levelname)s - %(funcName)s -  %(message)s')
 ch.setFormatter(formatter)
 root.addHandler(ch)
 
@@ -31,8 +32,8 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
     alive = False
     callback = None
     alive_message = 'Secure importer alive.'
-    tick_interval = 60
-    heartbeat_limit = 5
+    tick_interval = 10
+    heartbeat_limit = 6
 
     def onMessage(self, payload, isBinary):
         if not isBinary:
@@ -50,10 +51,10 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
         if self.alive:
             try:
                 if not self.health_check_func():
-                    logger.info("Reconnecting websocket")
+                    logger.info("[Protocol] Reconnecting websocket")
                     self.factory.connector.disconnect()
             except Exception as e:
-                logger.exception("error in health check %s" % e)
+                logger.exception("[Protocol] error in health check %s" % e)
             reactor.callLater(ReloginReconnectingClientFactory.health_check_interval, self.check_health)
 
     def log_alive(self):
@@ -71,7 +72,7 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
         :return:
         """
         self.alive = True
-        logger.info('connected to websocket')
+        logger.info('[Protocol %s] connected to websocket' % id(self))
 
         reactor.callLater(3, self.log_alive)
         # reactor.callLater(3, self.check_health)
@@ -80,30 +81,41 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
         reactor.callLater(1, self.tick)
         super().connectionMade()
 
+    def connectionLost(self, reason):
+        logger.info('[Protocol %s] connection lost ' % id(self))
+        self.alive = False
+
     def tick(self):
-        logger.info('incrementing tick')
-        self.heartBeatCounter += 1
+        if self.alive:
+            self.heartBeatCounter += 1
+            logger.info('[Protocol %s] incrementing tick to %s' % (id(self), self.heartBeatCounter))
 
-        if self.heartBeatCounter > 1:
-            logger.info('heartBeatCounter at %s' % self.heartBeatCounter)
+            if self.heartBeatCounter > self.heartbeat_limit:
+                logger.info(
+                    '[Protocol {}] no ping for {} * {} seconds -> disconnecting'.format(id(self), self.heartbeat_limit,
+                                                                                        self.tick_interval))
+                self.transport.loseConnection()
+                # self.factory.connector.disconnect()
+                return  # do not schedule another tick
 
-        if self.heartBeatCounter > self.heartbeat_limit:
-            logger.info('no ping for {} * {} seconds -> disconnecting'.format(self.heartbeat_limit, self.tick_interval))
-            self.factory.connector.disconnect()
-            return
-
-        reactor.callLater(self.tick_interval, self.tick)
+            reactor.callLater(self.tick_interval, self.tick)
 
     def onClose(self, wasClean, code, reason):
-        logger.warn("WebSocket connection closed: {0}".format(reason))
+        logger.warn("[Protocol {0}] WebSocket connection closed. Reason: {1}".format(id(self), reason))
         super().onClose(wasClean, code, reason)
 
     def onOpen(self):
         super().onOpen()
 
+    def onConnect(self, response):
+        logger.info(
+            "[Protocol {}] Connection established. Peer {}, heartbeat {}".format(id(self), self.peer,
+                                                                                 self.heartBeatCounter))
+        super().onConnect(response)
+
     def onPing(self, payload):
         self.heartBeatCounter = 0
-        print("Ping received from {} - {}. Resetting heartbeat counter".format(self.peer, self.heartBeatCounter))
+        logger.info("[Protocol {}] Ping received from {}. Resetting heartbeat counter".format(id(self), self.peer))
         super().onPing(payload)
 
 
@@ -114,12 +126,14 @@ class ReloginReconnectingClientFactory(ReconnectingClientFactory):
     health_check_interval = 300
     log_alive_interval = 300
 
+    attempt = 0
+
     def __init__(self, *args, login_func=None, **kwargs):
         self.login_func = login_func
         super().__init__(*args, **kwargs)
 
     def relogin(self):
-        logger.info('logging in again')
+        logger.info('[Factory] logging in again')
         # get the new address
         ws_url = self.login_func()
         # prepare the factory
@@ -141,16 +155,22 @@ class CallbackProtocolFactory(ReloginReconnectingClientFactory, WebSocketClientF
         self.old_map = None
 
     def startedConnecting(self, connector):
-        logger.debug('Started to connect.')
+        logger.debug('[Factory] Started to connect.')
 
     def clientConnectionLost(self, connector, reason):
         self._p.alive = False
 
-        logger.info('Lost connection. Reason: {}'.format(reason))
+        logger.info('[Factory] Lost connection. Reason: {}'.format(reason))
+        if self.attempt < self.maxRetries:
+            self.attempt += 1
+            logger.info('[Factory] Relogin attempt {}'.format(self.attempt))
+
+            self.relogin()
+
         ReconnectingClientFactory.clientConnectionLost(self, connector, reason)
 
     def clientConnectionFailed(self, connector, reason):
-        logger.info('Connection failed. Reason: {}'.format(reason))
+        logger.info('[Factory] Connection failed. Reason: {}'.format(reason))
         ReconnectingClientFactory.clientConnectionFailed(self, connector, reason)
 
     def buildProtocol(self, addr):
@@ -201,25 +221,25 @@ class CallbackProtocolFactory(ReloginReconnectingClientFactory, WebSocketClientF
         return True
 
 
-def run(ws_url, message_callback, login_func):
+def run(ws_url, message_check_capability_push_callback, login_func):
     """
 
     :param ws_url:
-    :param message_callback: to run with any message received from the websocket
+    :param message_check_capability_push_callback: to run with any message received from the websocket
     :param login_func: perform a login to get the websocket url
     :param health_check_func: to run periodically to check health of the websocket
     :return:
     """
     logger.info("url: %s" % ws_url)
-    factory = CallbackProtocolFactory(ws_url, websocketCallback=message_callback, login_func=login_func)
-    factory.callBack = message_callback
+    factory = CallbackProtocolFactory(ws_url, websocketCallback=message_check_capability_push_callback,
+                                      health_check_func=None, login_func=login_func)
 
     connector = connectWS(factory)
     factory.connector = connector
     reactor.run()
 
 
-def callback(payload):
+def capability_push_check_callback(payload):
     response = payload.decode('utf8')
     logger.info("Message received: {}".format(response[:10]))
     data = json.loads(response)
@@ -240,4 +260,4 @@ def get_ws_url():
 if __name__ == '__main__':
     log.startLogging(sys.stdout)
     ws_url = get_ws_url()
-    run(ws_url, callback, get_ws_url)
+    run(ws_url, capability_push_check_callback, get_ws_url)
