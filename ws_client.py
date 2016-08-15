@@ -77,6 +77,7 @@ class AliveLoggingReceivingCallbackWebsocketClientProtocol(WebSocketClientProtoc
         reactor.callLater(3, self.log_alive)
         # reactor.callLater(3, self.check_health)
 
+        self.factory.resetDelay()
         self.heartBeatCounter = 0
         reactor.callLater(1, self.tick)
         super().connectionMade()
